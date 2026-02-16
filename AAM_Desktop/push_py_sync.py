@@ -1,21 +1,25 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import shutil
 import subprocess
 from pathlib import Path
 from datetime import datetime
+import ctypes
 
+# =========================
+# CONFIG
+# =========================
 REPO_URL = "https://github.com/aamarzan/projects.git"
 
 AAM_DESKTOP = Path(r"C:\Users\User\OneDrive\2. Personal\AAM\Desktop")
-E_AHMED = Path(r"E:\Dr. Ahmed")
+E_AHMED     = Path(r"E:\Dr. Ahmed")
 
 REPO_PATH = AAM_DESKTOP / "projects_py_only"
 
 SOURCES = [
     ("AAM_Desktop", AAM_DESKTOP),
-    ("Dr_Ahmed", E_AHMED),
+    ("Dr_Ahmed",    E_AHMED),
 ]
 
 EXCLUDE_DIRS = {
@@ -28,10 +32,46 @@ EXCLUDE_DIRS = {
     "projects_py_only",
 }
 
+# OneDrive “cloud-only” / placeholder detection (Windows file attributes)
+FILE_ATTRIBUTE_OFFLINE = 0x00001000
+FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+FILE_ATTRIBUTE_RECALL_ON_OPEN = 0x00040000
+FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x00400000
+INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+
+kernel32 = ctypes.windll.kernel32
+kernel32.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+kernel32.GetFileAttributesW.restype = ctypes.c_uint32
+
+
+def get_attrs(p: Path) -> int | None:
+    attrs = kernel32.GetFileAttributesW(str(p))
+    if attrs == INVALID_FILE_ATTRIBUTES:
+        return None
+    return int(attrs)
+
+
+def is_cloud_only(p: Path) -> bool:
+    """
+    Returns True if path looks like a OneDrive cloud-only placeholder (not stored locally).
+    We primarily rely on OFFLINE attribute. This avoids triggering hydration/download.
+    """
+    attrs = get_attrs(p)
+    if attrs is None:
+        return False
+
+    # Strong signal: OFFLINE (typical for cloud-only placeholders)
+    if attrs & FILE_ATTRIBUTE_OFFLINE:
+        return True
+
+    # Extra safety: some placeholders are reparse points with recall flags
+    if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) and (attrs & (FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)):
+        return True
+
+    return False
+
 
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a command and return CompletedProcess."""
-    # Use shell=False for safety; Git and RoboCopy are executables on PATH.
     p = subprocess.run(cmd, cwd=str(cwd) if cwd else None, text=True, capture_output=True)
     if check and p.returncode != 0:
         raise RuntimeError(
@@ -59,6 +99,7 @@ def ensure_repo() -> None:
     if not git_dir.exists():
         info(f"Initializing collector repo at: {REPO_PATH}")
         run(["git", "init"], cwd=REPO_PATH)
+
     # Ensure origin points to correct repo
     p = subprocess.run(["git", "remote", "get-url", "origin"], cwd=str(REPO_PATH), text=True, capture_output=True)
     if p.returncode != 0:
@@ -71,8 +112,7 @@ def ensure_repo() -> None:
     # Ensure main branch
     run(["git", "branch", "-M", "main"], cwd=REPO_PATH)
 
-    # Fetch and hard reset to origin/main if it exists
-    # (prevents non-fast-forward problems)
+    # Fetch and hard reset to origin/main if it exists (prevents non-fast-forward)
     subprocess.run(["git", "fetch", "origin"], cwd=str(REPO_PATH), text=True, capture_output=True)
     ref_check = subprocess.run(
         ["git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"],
@@ -102,18 +142,29 @@ def clean_worktree_keep_git() -> None:
 
 
 def write_gitignore_py_only() -> None:
-    gi = REPO_PATH / ".gitignore"
-    gi.write_text("*\n!*/\n!**/*.py\n!.gitignore\n", encoding="utf-8")
+    (REPO_PATH / ".gitignore").write_text("*\n!*/\n!**/*.py\n!.gitignore\n", encoding="utf-8")
 
 
-def should_skip_dir(path: Path) -> bool:
-    return path.name in EXCLUDE_DIRS
+def collect_py_files() -> tuple[int, int, int]:
+    """
+    Copies *.py from sources into collector repo, preserving structure.
+    Skips excluded dirs and skips OneDrive cloud-only placeholders (won't download).
+    Returns (copied, skipped_cloud, skipped_missing_src)
+    """
+    copied = 0
+    skipped_cloud = 0
+    skipped_missing = 0
 
-
-def collect_py_files() -> None:
     for name, src_root in SOURCES:
         if not src_root.exists():
             warn(f"Source not found, skipping: {src_root}")
+            skipped_missing += 1
+            continue
+
+        # If the *source root* is cloud-only (rare, but possible), skip it completely
+        if is_cloud_only(src_root):
+            warn(f"Source is cloud-only (not local), skipping to avoid download: {src_root}")
+            skipped_cloud += 1
             continue
 
         dest_root = REPO_PATH / name
@@ -121,32 +172,49 @@ def collect_py_files() -> None:
 
         info(f"Collecting *.py from: {src_root} -> {dest_root}")
 
-        # Walk source tree
-        for root, dirs, files in os.walk(src_root):
+        for root, dirs, files in os.walk(src_root, topdown=True):
             root_path = Path(root)
 
-            # prune excluded dirs
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+            # prune excluded dirs + prune cloud-only dirs (prevents OneDrive hydration)
+            new_dirs = []
+            for d in dirs:
+                if d in EXCLUDE_DIRS:
+                    continue
+                dp = root_path / d
+                if is_cloud_only(dp):
+                    skipped_cloud += 1
+                    continue
+                new_dirs.append(d)
+            dirs[:] = new_dirs
 
             for fn in files:
                 if not fn.lower().endswith(".py"):
                     continue
                 src_file = root_path / fn
 
-                # compute relative path under source root
+                # If file is cloud-only placeholder, SKIP (prevents download)
+                if is_cloud_only(src_file):
+                    skipped_cloud += 1
+                    continue
+
                 rel = src_file.relative_to(src_root)
                 dst_file = dest_root / rel
                 dst_file.parent.mkdir(parents=True, exist_ok=True)
 
-                # copy only if changed (size+mtime quick check; then overwrite)
+                # copy if missing or changed (size + mtime quick check)
                 if dst_file.exists():
                     try:
-                        if src_file.stat().st_size == dst_file.stat().st_size and int(src_file.stat().st_mtime) == int(dst_file.stat().st_mtime):
+                        s1 = src_file.stat()
+                        s2 = dst_file.stat()
+                        if (s1.st_size == s2.st_size) and (int(s1.st_mtime) == int(s2.st_mtime)):
                             continue
                     except FileNotFoundError:
                         pass
 
                 shutil.copy2(src_file, dst_file)
+                copied += 1
+
+    return copied, skipped_cloud, skipped_missing
 
 
 def list_changed_py_files() -> list[str]:
@@ -154,17 +222,17 @@ def list_changed_py_files() -> list[str]:
     if p.returncode != 0:
         raise RuntimeError(p.stderr)
 
-    changed = []
+    changed: list[str] = []
     for line in p.stdout.splitlines():
         if len(line) < 4:
             continue
-        path_part = line[3:]  # keep spaces inside file path
-        # Handle rename "old -> new"
-        if "->" in path_part:
+        path_part = line[3:]
+        if "->" in path_part:  # rename
             path_part = path_part.split("->", 1)[1].strip()
         if path_part.lower().endswith(".py"):
             changed.append(path_part)
-    # de-dup while preserving order
+
+    # de-dup preserve order
     seen = set()
     out = []
     for x in changed:
@@ -182,8 +250,9 @@ def stage_commit_push_one_by_one(changed_files: list[str]) -> None:
     info(f"Will commit/push these .py files one-by-one: {len(changed_files)}")
 
     for f in changed_files:
-        # Stage ONLY this path
-        run(["git", "add", "-A", "--", f], cwd=REPO_PATH)
+        # IMPORTANT: ensure each commit contains ONLY one file
+        run(["git", "reset"], cwd=REPO_PATH)              # unstage everything
+        run(["git", "add", "--", f], cwd=REPO_PATH)      # stage only this file
 
         # If nothing staged, skip
         diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=str(REPO_PATH))
@@ -203,14 +272,14 @@ def main() -> None:
     ensure_repo()
     clean_worktree_keep_git()
     write_gitignore_py_only()
-    collect_py_files()
 
-    # Stage everything (py-only enforced by .gitignore)
-    run(["git", "add", "-A"], cwd=REPO_PATH)
+    copied, skipped_cloud, skipped_missing = collect_py_files()
 
+    # DO NOT stage everything here (it would break one-by-one commits)
     changed = list_changed_py_files()
     stage_commit_push_one_by_one(changed)
 
+    info(f"Copy summary: copied={copied}, skipped_cloud_only={skipped_cloud}, skipped_missing_sources={skipped_missing}")
     info("Done.")
 
 
