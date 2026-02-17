@@ -50,9 +50,10 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 # - VERT_GAP:   vertical gap *between* stacked left-column boxes
 #
 # Recommended "more spacious" defaults:
-MAIN_BOX_H = 0.98
+MAIN_BOX_H = 1.0
 TALL_BOX_H = 1.12
-VERT_GAP   = 0.32
+VERT_GAP   = 0.7
+
 
 # Layout breathing room (usually no need to touch):
 TOP_SPACE    = 1.10   # reserved space for title/subtitle above the top box
@@ -360,7 +361,7 @@ class Layout:
     margin: float = 1.35
     main_w: float = 7.0
     side_w: float = 7.0
-    col_gap: float = 2.0
+    col_gap: float = 2.5
 
     # Heights / vertical spacing (edit via USER TUNING KNOBS above)
     box_h: float = MAIN_BOX_H
