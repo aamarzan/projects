@@ -2,29 +2,20 @@
 # -*- coding: utf-8 -*-
 
 """
-figure_1_prisma_goat_v8.py
+figure_1_prisma_goat_v12.py
 
-v7 changes:
-v8 change:
-- Inline denominators for included boxes to avoid overflow (e.g., 'Reports included (n = X)')
+v12 (layout upgrade):
+- FIX: Newlines are real newlines (no literal '\\n' on the figure).
+- NEW: 3-column layout option:
+    Column 1: Main PRISMA spine (left flow boxes)
+    Column 2: Standard PRISMA side boxes (4 boxes)
+    Column 3: Supplementary panels (Search snapshot, Bangladesh evidence summary, Diagnostics)
+  -> This removes the bottom row panels, saving vertical space and enabling larger, clearer text.
+- NEW: Separate, in-script controllers for:
+    (A) left flow boxes, (B) right PRISMA boxes, (C) supplementary panels.
 
-1) Box widths are parameterized (CLI knobs) so boxes can be made tighter.
-2) Bottom 3 panels are centered as a group -> equal left/right margins, no cropping.
-3) Extra save padding to protect rounded corners/shadows.
-
-Run:
-  python figure_1_prisma_goat_v8.py --write_template prisma_counts.json
-  # edit prisma_counts.json
-  python figure_1_prisma_goat_v8.py --counts prisma_counts.json --outdir figures --bottom_panel --docx "Multiple Myeloma.docx" --eps
-
-Most useful tuning knobs:
-  --main_w        width of left/main spine boxes
-  --side_w        width of right-side boxes
-  --col_gap       gap between main and side columns
-  --xmax          internal canvas width (increase if you add lots more text)
-  --margin        left/right safe margin inside canvas
-  --bottom_ratios ratios for (Search snapshot, BD summary, Diagnostics) widths, e.g. "1.2,1.0,0.9"
-  --bottom_gap    gap between bottom panels
+Run (same as before):
+  python figure_1_prisma_goat_v12.py --counts prisma_counts.json --outdir figures --docx "Multiple Myeloma.docx"
 """
 
 from __future__ import annotations
@@ -43,21 +34,54 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 
-# =========================== USER TUNING KNOBS ===========================
-# Increase these to make boxes taller and gaps larger (no CLI needed).
-# - MAIN_BOX_H: height of most left-column boxes (unique → meta-analysis)
-# - TALL_BOX_H: height of the top identification box and the top-right removal box
-# - VERT_GAP:   vertical gap *between* stacked left-column boxes
-#
-# Recommended "more spacious" defaults:
-MAIN_BOX_H = 0.8
-TALL_BOX_H = 1.12
-VERT_GAP   = 0.5
+# ============================ USER CONTROLLERS ============================
+# 1) WIDTH CONTROLS (data-units)
+#    Tip: if boxes look too wide, reduce widths and/or gaps. If anything crops, keep AUTO_XMAX=True.
+AUTO_XMAX = True
+MARGIN_X = 1.20
+BOX_TEXT_SIZE = 9.6   # <- change only this to control ALL box text size
+FORCE_GLOBAL_BOX_TEXT_SIZE = True
 
-# Layout breathing room (usually no need to touch):
-TOP_SPACE    = 1.10   # reserved space for title/subtitle above the top box
-BOTTOM_MARGIN = 0.55  # reserved white space below the last left box
+FLOW_W = 7.30           # left spine box width
+SIDE_W = 7.10           # right PRISMA side-box width (4 boxes)
+PANEL_W = 6.60          # rightmost panel width (3 boxes)
+
+GAP_FLOW_TO_SIDE = 0.90
+GAP_SIDE_TO_PANEL = 0.90
+
+# 2) HEIGHT + GAP CONTROLS (data-units)
+# Left spine boxes:
+FLOW_H = 0.95
+FLOW_H_TALL = 1.62      # top identification box
+FLOW_V_GAP = 0.34       # vertical gap between left spine boxes
+
+# Right PRISMA side boxes:
+SIDE_H = 0.95
+SIDE_H_TALL = 1.22      # top-right "removed" box height
+SIDE_FT_H = 2.25        # "Reports excluded (with reasons)" box height
+
+# Supplementary panels (rightmost column):
+PANEL_GAP = 0.32
+PANEL_H = 3.38          # each of the 3 panels height (stacked top->bottom)
+
+# 3) TYPOGRAPHY
+TITLE_SIZE = 16
+BASE_FONT = 10.6
+TITLE_WEIGHT = "bold"
+
+# Box text defaults (label_in_box will auto-wrap + auto-shrink as needed)
+FLOW_MAX = 11.3
+FLOW_MIN = 8.4
+SIDE_MAX = 10.8
+SIDE_MIN = 8.0
+PANEL_BODY_MAX = 9.2
+PANEL_BODY_MIN = 7.4
+
+# 4) VERTICAL CANVAS MARGINS
+TOP_SPACE = 1.10        # reserved space for title above top boxes
+BOTTOM_MARGIN = 0.55    # white space under lowest content
 # ========================================================================
+
 
 # --------------------------- Helpers / Style ---------------------------
 
@@ -75,8 +99,8 @@ def set_rc():
     mpl.rcParams.update(
         {
             "font.family": f,
-            "font.size": 10.4,
-            "figure.titlesize": 16,
+            "font.size": BASE_FONT,
+            "figure.titlesize": TITLE_SIZE,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
             "svg.fonttype": "none",
@@ -173,18 +197,7 @@ def gradient_box(
     return patch
 
 
-def label(
-    ax,
-    x,
-    y,
-    s,
-    ha="center",
-    va="center",
-    size=10.4,
-    weight="regular",
-    color="#111111",
-    z=10,
-):
+def label(ax, x, y, s, ha="center", va="center", size=BASE_FONT, weight="regular", color="#111111", z=10):
     ax.text(
         x,
         y,
@@ -234,6 +247,144 @@ def connect_down(ax, upper_box, lower_box, color="#262626", lw=1.45, ms=12.5):
     arrow(ax, (x, y0), (x, y1), color=color, lw=lw, ms=ms)
 
 
+# --------------------------- Box-safe text helpers ---------------------------
+
+def _wrap_width_for_box(box_w: float) -> int:
+    """Heuristic: convert box width (data units) to approx characters/line."""
+    return int(max(22, min(92, round(box_w * 7.2))))
+
+
+def label_in_box(
+    ax,
+    box,
+    text: str,
+    *,
+    ha: str = "center",
+    va: str = "center",
+    size: float = BOX_TEXT_SIZE,
+    max_size: float | None = None,   # accepted for backward-compat (ignored if FORCE_GLOBAL_BOX_TEXT_SIZE)
+    min_size: float | None = None,   # accepted for backward-compat (ignored if FORCE_GLOBAL_BOX_TEXT_SIZE)
+    weight: str = "regular",
+    color: str = "#111111",
+    pad: float = 0.12,
+    wrap: bool = True,
+    justify: bool = False,
+    clip_patch=None,
+    z: int = 10,
+):
+    x, y, w, h = box
+    s = "" if text is None else str(text)
+
+    # enforce one global font size everywhere (your requirement)
+    if FORCE_GLOBAL_BOX_TEXT_SIZE:
+        size = BOX_TEXT_SIZE
+    else:
+        # if someone uses the old API and does not pass size, respect max_size
+        if max_size is not None and (size == BOX_TEXT_SIZE):
+            size = max_size
+
+    if wrap:
+        s = wrap_keep_newlines(s, _wrap_width_for_box(w))
+
+    # anchor position
+    if ha == "left":
+        tx = x + pad
+    elif ha == "right":
+        tx = x + w - pad
+    else:
+        tx = x + w / 2
+
+    if va == "top":
+        ty = y + h - pad
+    elif va == "bottom":
+        ty = y + pad
+    else:
+        ty = y + h / 2
+
+    # pseudo-justify (matplotlib has no true justify)
+    if justify and ha == "left" and va == "top":
+        ax.figure.canvas.draw()
+        renderer = ax.figure.canvas.get_renderer()
+
+        tmp = ax.text(0, 0, " ", fontsize=size, fontweight=weight, alpha=0)
+        space_px = tmp.get_window_extent(renderer=renderer).width
+        tmp.remove()
+
+        max_px = (
+            ax.transData.transform((x + w - pad, 0))[0]
+            - ax.transData.transform((x + pad, 0))[0]
+        )
+
+        def text_px(line: str) -> float:
+            t0 = ax.text(0, 0, line, fontsize=size, fontweight=weight, alpha=0)
+            bb = t0.get_window_extent(renderer=renderer)
+            t0.remove()
+            return bb.width
+
+        out_lines = []
+        lines = s.splitlines()
+        for i, line in enumerate(lines):
+            words = line.split()
+            if i == len(lines) - 1 or len(words) <= 2:
+                out_lines.append(line)
+                continue
+
+            w0 = text_px(line)
+            extra = max_px - w0
+            if extra <= space_px:
+                out_lines.append(line)
+                continue
+
+            gaps = len(words) - 1
+            add_spaces = int(round(extra / space_px))
+            base = add_spaces // gaps
+            rem = add_spaces % gaps
+
+            new = []
+            for gi, wd in enumerate(words[:-1]):
+                new.append(wd)
+                new.append(" " * (1 + base + (1 if gi < rem else 0)))
+            new.append(words[-1])
+            out_lines.append("".join(new))
+
+        s = "\n".join(out_lines)
+
+    t = ax.text(
+        tx, ty, s,
+        ha=ha, va=va,
+        fontsize=size,
+        fontweight=weight,
+        color=color,
+        zorder=z,
+        linespacing=1.18,
+    )
+
+    if clip_patch is not None:
+        t.set_clip_path(clip_patch)
+        t.set_clip_on(True)
+
+    return t
+
+
+def _zero_phrase(n: int, *, kind: str) -> str:
+    if n != 0:
+        return ""
+    if kind == "searched":
+        return "not searched"
+    if kind == "used":
+        return "not used"
+    if kind == "performed":
+        return "not performed"
+    return "not applicable"
+
+
+def _line(label0: str, n: int, *, zero_kind: str = "searched") -> str:
+    zp = _zero_phrase(n, kind=zero_kind)
+    if n == 0 and zp:
+        return f"{label0} {zp} (n = 0)"
+    return f"{label0} (n = {n})"
+
+
 # --------------------------- Data ---------------------------
 
 @dataclass
@@ -272,7 +423,6 @@ class PrismaCounts:
             n = int(item.get("n", 0))
             if r:
                 fulltext.append((r, n))
-
         meta = d.get("metadata", {})
         return PrismaCounts(
             db=int(ident.get("databases", 0)),
@@ -351,34 +501,108 @@ def extract_table1_summary(docx_path: Path) -> Optional[Dict[str, Any]]:
     return {"studies": studies, "total_n": n_sum if n_counted else None, "n_counted": n_counted, "designs": designs}
 
 
-# --------------------------- Layout knobs ---------------------------
+# --------------------------- Layout ---------------------------
 
 @dataclass
 class Layout:
-    xmax: float = 21.8
-    y_max: float = 10.0
-    margin: float = 1.35
-    main_w: float = 7.0
-    side_w: float = 7.0
-    col_gap: float = 2.5
+    # horizontal
+    margin_x: float = MARGIN_X
+    flow_w: float = FLOW_W
+    side_w: float = SIDE_W
+    panel_w: float = PANEL_W
+    gap_flow_side: float = GAP_FLOW_TO_SIDE
+    gap_side_panel: float = GAP_SIDE_TO_PANEL
+    xmax: float = 0.0  # auto-filled
 
-    # Heights / vertical spacing (edit via USER TUNING KNOBS above)
-    box_h: float = MAIN_BOX_H
-    box_h_tall: float = TALL_BOX_H
-    v_gap: float = VERT_GAP
+    # vertical
     top_space: float = TOP_SPACE
     bottom_margin: float = BOTTOM_MARGIN
 
+    flow_h: float = FLOW_H
+    flow_h_tall: float = FLOW_H_TALL
+    flow_v_gap: float = FLOW_V_GAP
 
-def required_prisma_ymax(layout: "Layout") -> float:
-    """Minimum Y span needed to fit the left column stack without collisions."""
-    dy = layout.box_h + layout.v_gap
-    return layout.bottom_margin + layout.top_space + layout.box_h_tall + 7 * dy
+    side_h: float = SIDE_H
+    side_h_tall: float = SIDE_H_TALL
+    side_ft_h: float = SIDE_FT_H
+
+    panel_h: float = PANEL_H
+    panel_gap: float = PANEL_GAP
+
+
+def compute_xmax(layout: Layout) -> float:
+    return (
+        layout.margin_x
+        + layout.flow_w
+        + layout.gap_flow_side
+        + layout.side_w
+        + layout.gap_side_panel
+        + layout.panel_w
+        + layout.margin_x
+    )
+
+
+def required_ymax(layout: Layout) -> float:
+    """Min Y span needed to fit flow stack + panel stack."""
+    flow_dy = layout.flow_h + layout.flow_v_gap
+    flow_height = layout.bottom_margin + layout.top_space + layout.flow_h_tall + 7 * flow_dy
+
+    panel_height = layout.bottom_margin + layout.top_space + (3 * layout.panel_h + 2 * layout.panel_gap)
+    return max(flow_height, panel_height, 10.0)
+
+
+# --------------------------- Drawing ---------------------------
+
+def draw_side_panel(ax, box, title: str, body: str, c0: str, c1: str):
+    border = "#1f1f1f"
+    x, y, w, h = box
+    patch = gradient_box(ax, x, y, w, h, c0, c1, edge=border, lw=1.0, r=0.16, shadow=True)
+
+    # title (clipped to panel)
+    t_title = ax.text(
+        x + 0.36,
+        y + h - 0.30,
+        title,
+        ha="left",
+        va="top",
+        fontsize=11.2,
+        fontweight="bold",
+        color="#111111",
+        zorder=10,
+    )
+    t_title.set_clip_path(patch)
+    t_title.set_clip_on(True)
+
+    # body (auto-fit; also clipped to panel)
+    body_box = (x + 0.02, y + 0.02, w - 0.04, h - 0.55)
+    label_in_box(
+        ax,
+        body_box,
+        body,
+        ha="left",
+        va="top",
+        max_size=PANEL_BODY_MAX,
+        min_size=PANEL_BODY_MIN,
+        weight="regular",
+        color="#222222",
+        pad=0.32,
+        clip_patch=patch,
+    )
+
+
 
 def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = None):
     ax.set_axis_off()
+
+    if AUTO_XMAX:
+        layout.xmax = compute_xmax(layout)
+    else:
+        if layout.xmax <= 0:
+            layout.xmax = compute_xmax(layout)
+
+    y_max = required_ymax(layout)
     ax.set_xlim(0, layout.xmax)
-    ax.set_ylim(0, max(layout.y_max, required_prisma_ymax(layout)))
+    ax.set_ylim(0, y_max)
 
     border = "#1f1f1f"
     arrowc = "#262626"
@@ -389,29 +613,26 @@ def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = N
     g_in = ("#ffffff", "#ffe4ef")
     g_sd = ("#ffffff", "#f0f0f0")
 
-    y_max = max(layout.y_max, required_prisma_ymax(layout))
+    # title
     title_y = y_max - 0.28
     subtitle_y = y_max - 0.62
-    label(ax, layout.xmax / 2, title_y, "PRISMA flow diagram", size=16, weight="bold")
+    label(ax, layout.xmax / 2, title_y, "PRISMA flow diagram", size=TITLE_SIZE, weight=TITLE_WEIGHT)
     if subtitle:
         label(ax, layout.xmax / 2, subtitle_y, subtitle, size=10.8, color="#444444")
 
-    xM = layout.margin
-    wM = layout.main_w
-    xS = xM + wM + layout.col_gap
-    wS = layout.side_w
+    # column x positions
+    xM = layout.margin_x
+    xS = xM + layout.flow_w + layout.gap_flow_side
+    xP = xS + layout.side_w + layout.gap_side_panel
 
-    # shift left if user makes it too wide
-    right_edge = xS + wS
-    if right_edge > layout.xmax - 0.45:
-        shift = right_edge - (layout.xmax - 0.45)
-        xM = max(0.6, xM - shift)
-        xS = xM + wM + layout.col_gap
+    wM, wS, wP = layout.flow_w, layout.side_w, layout.panel_w
 
-    h = layout.box_h
-    h_tall = layout.box_h_tall
-    dy = h + layout.v_gap
+    # left spine y positions
+    h = layout.flow_h
+    h_tall = layout.flow_h_tall
+    dy = h + layout.flow_v_gap
     y0 = y_max - layout.top_space - h_tall
+
     b_ident  = (xM, y0,                 wM, h_tall)
     b_unique = (xM, y0 - 1 * dy,        wM, h)
     b_screen = (xM, y0 - 2 * dy,        wM, h)
@@ -421,11 +642,19 @@ def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = N
     b_incl   = (xM, y0 - 6 * dy,        wM, h)
     b_meta   = (xM, y0 - 7 * dy,        wM, h)
 
-    b_removed = (xS, y0 - 0.42 * dy,     wS, h_tall)
-    b_excl_ta = (xS, b_screen[1],        wS, h)
-    b_notret  = (xS, b_sought[1],        wS, h)
-    b_excl_ft = (xS, b_assess[1] - 0.62, wS, 2.10)
+    # right PRISMA boxes (aligned to left)
+    b_removed = (xS, y0 - 0.42 * dy,     wS, layout.side_h_tall)
+    b_excl_ta = (xS, b_screen[1],        wS, layout.side_h)
+    b_notret  = (xS, b_sought[1],        wS, layout.side_h)
+    b_excl_ft = (xS, b_assess[1] - 0.62, wS, layout.side_ft_h)
 
+    # rightmost panels (stacked top->bottom)
+    panel_top = b_ident[1] + b_ident[3]  # align to top of identification box
+    p1 = (xP, panel_top - layout.panel_h,                 wP, layout.panel_h)
+    p2 = (xP, panel_top - (2 * layout.panel_h + layout.panel_gap), wP, layout.panel_h)
+    p3 = (xP, panel_top - (3 * layout.panel_h + 2 * layout.panel_gap), wP, layout.panel_h)
+
+    # draw left spine boxes
     gradient_box(ax, *b_ident,  *g_id, edge=border, lw=1.32)
     gradient_box(ax, *b_unique, *g_id, edge=border, lw=1.22)
     gradient_box(ax, *b_screen, *g_sc, edge=border, lw=1.32)
@@ -435,56 +664,94 @@ def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = N
     gradient_box(ax, *b_incl,   *g_in, edge=border, lw=1.32)
     gradient_box(ax, *b_meta,   *g_in, edge=border, lw=1.22)
 
+    # draw right PRISMA boxes
     gradient_box(ax, *b_removed, *g_sd, edge=border, lw=1.05)
     gradient_box(ax, *b_excl_ta, *g_sd, edge=border, lw=1.05)
     gradient_box(ax, *b_notret,  *g_sd, edge=border, lw=1.05)
     gradient_box(ax, *b_excl_ft, *g_sd, edge=border, lw=1.05)
 
-    label(ax, xM - 0.55, b_ident[1] + b_ident[3] / 2, "Identification", ha="right", size=10.6, weight="bold", color="#2b4d8a")
-    label(ax, xM - 0.55, b_screen[1] + h / 2,         "Screening",      ha="right", size=10.6, weight="bold", color="#8a5a00")
-    label(ax, xM - 0.55, b_assess[1] + h / 2,         "Eligibility",    ha="right", size=10.6, weight="bold", color="#1f6b3b")
-    label(ax, xM - 0.55, b_meta[1] + h / 2,           "Included",       ha="right", size=10.6, weight="bold", color="#7a1f4c")
+    # section labels (far left)
+    label(ax, xM - 0.55, b_ident[1] + b_ident[3] / 2, "Identification", ha="right", size=10.8, weight="bold", color="#2b4d8a")
+    label(ax, xM - 0.55, b_screen[1] + h / 2,         "Screening",      ha="right", size=10.8, weight="bold", color="#8a5a00")
+    label(ax, xM - 0.55, b_assess[1] + h / 2,         "Eligibility",    ha="right", size=10.8, weight="bold", color="#1f6b3b")
+    label(ax, xM - 0.55, b_meta[1] + h / 2,           "Included",       ha="right", size=10.8, weight="bold", color="#7a1f4c")
 
-    ident_txt = (
-        "Records identified from\n"
-        f"databases (n = {c.db}), registers (n = {c.reg}),\n"
-        f"websites (n = {c.web}), organisations (n = {c.org}),\n"
-        f"citation searching (n = {c.cite})"
-    )
-    label(ax, b_ident[0] + wM / 2, b_ident[1] + b_ident[3] / 2, wrap_keep_newlines(ident_txt, 44), size=10.0, weight="bold")
+    # identification box text (slightly more professional)
+    ident_lines = [
+        "Records identified",
+        "• " + _line("Database: PubMed", c.db, zero_kind="searched"),
+        "• " + _line("Trial registers", c.reg, zero_kind="searched"),
+        "• " + _line("Websites", c.web, zero_kind="searched"),
+        "• " + _line("Organisations", c.org, zero_kind="searched"),
+        "• " + _line("Citation searching", c.cite, zero_kind="performed"),
+    ]
+    label_in_box(ax, b_ident, "\n".join(ident_lines), size=BOX_TEXT_SIZE, weight="bold")
 
+    # unique
     unique_n = max(0, (c.db + c.reg + c.web + c.org + c.cite) - (c.dup + c.auto + c.other_rm))
-    label(ax, b_unique[0] + wM / 2, b_unique[1] + h / 2, f"Unique records after removals\n(n = {unique_n})", size=11.0, weight="bold")
+    label_in_box(ax, b_unique, f"Unique records after removals\n(n = {unique_n})",
+                 max_size=FLOW_MAX, min_size=FLOW_MIN, weight="bold")
 
-    removed_txt = (
-        "Records removed before screening\n"
-        f"Duplicate records removed (n = {c.dup})\n"
-        f"Marked as ineligible by automation (n = {c.auto})\n"
-        f"Removed for other reasons (n = {c.other_rm})"
-    )
-    label(ax, b_removed[0] + wS / 2, b_removed[1] + b_removed[3] / 2, wrap_keep_newlines(removed_txt, 52), ha="center", va="center", size=9.0)
+    # screening
+    label_in_box(ax, b_screen, f"Records screened (title/abstract)\n(n = {c.screened})",
+                 max_size=FLOW_MAX, min_size=FLOW_MIN, weight="bold")
 
-    label(ax, b_screen[0] + wM / 2, b_screen[1] + h / 2, f"Records screened\n(n = {c.screened})", size=11.2, weight="bold")
-    label(ax, b_excl_ta[0] + wS / 2, b_excl_ta[1] + h / 2, f"Records excluded\n(n = {c.excluded_ta})", size=10.8, weight="bold")
-
-    label(ax, b_sought[0] + wM / 2, b_sought[1] + h / 2, f"Reports sought for retrieval\n(n = {c.reports_sought})", size=10.9, weight="bold")
-    label(ax, b_notret[0] + wS / 2, b_notret[1] + h / 2, f"Reports not retrieved\n(n = {c.not_retrieved})", size=10.8, weight="bold")
+    # sought/retrieved/assessed
+    label_in_box(ax, b_sought, f"Reports sought for retrieval (full text)\n(n = {c.reports_sought})",
+                 max_size=FLOW_MAX, min_size=FLOW_MIN, weight="bold")
 
     retrieved_n = max(0, c.reports_sought - c.not_retrieved)
-    label(ax, b_retr[0] + wM / 2, b_retr[1] + h / 2, f"Reports retrieved\n(n = {retrieved_n})", size=10.9, weight="bold")
+    label_in_box(ax, b_retr, f"Reports retrieved (full text)\n(n = {retrieved_n})",
+                 max_size=FLOW_MAX, min_size=FLOW_MIN, weight="bold")
 
-    label(ax, b_assess[0] + wM / 2, b_assess[1] + h / 2, f"Reports assessed for eligibility\n(n = {c.assessed})", size=10.9, weight="bold")
+    label_in_box(ax, b_assess, f"Reports assessed for eligibility (full text)\n(n = {c.assessed})",
+                 max_size=FLOW_MAX, min_size=FLOW_MIN, weight="bold")
+
+    # included
+    incl_txt = (
+        f"Studies included in review (qualitative synthesis) (n = {c.studies})\n"
+        f"Reports included (n = {c.reports})"
+    )
+    label_in_box(ax, b_incl, incl_txt, wrap=False, size=BOX_TEXT_SIZE, weight="bold")
+
+
+    # meta
+    if c.meta_studies > 0:
+        meta_txt = f"Studies included in meta-analysis (quantitative)\n(n = {c.meta_studies})"
+    else:
+        meta_txt = "Meta-analysis not performed\n(n = 0)"
+    label_in_box(ax, b_meta, meta_txt, max_size=10.6, min_size=8.0, weight="bold")
+
+    # right PRISMA text
+    removed_txt = (
+        "Records removed before screening. "
+        f"Duplicate records removed (n = {c.dup}). "
+        f"Automation tools {_zero_phrase(c.auto, kind='used')} (n = {c.auto}). "
+        f"Other reasons {_zero_phrase(c.other_rm, kind='performed')} (n = {c.other_rm})."
+    )
+    label_in_box(ax, b_removed, removed_txt, ha="left", va="top", justify=True, wrap=True, size=BOX_TEXT_SIZE)
+
+
+    label_in_box(ax, b_excl_ta, f"Records excluded\n(n = {c.excluded_ta})",
+                 max_size=SIDE_MAX, min_size=SIDE_MIN, weight="bold")
+
+    label_in_box(ax, b_notret, f"Reports not retrieved\n(n = {c.not_retrieved})",
+                 max_size=SIDE_MAX, min_size=SIDE_MIN, weight="bold")
 
     if c.fulltext_excl:
-        lines = [f"• {r} (n = {n})" for r, n in c.fulltext_excl]
-        ft_txt = "Reports excluded (with reasons)\n" + "\n".join(lines)
+        sentences = [f"{r} (n = {n})." for r, n in c.fulltext_excl]
+        ft_txt = "Reports excluded (with reasons)\n" + "\n".join(sentences)
     else:
-        ft_txt = "Reports excluded (with reasons)\n• Add full-text exclusion reasons in JSON"
-    label(ax, b_excl_ft[0] + wS / 2, b_excl_ft[1] + b_excl_ft[3] / 2, wrap_keep_newlines(ft_txt, 56), ha="center", va="center", size=9.0)
+        ft_txt = "Reports excluded (with reasons)\nNo full-text exclusions recorded."
 
-    label(ax, b_incl[0] + wM / 2, b_incl[1] + h / 2, f"Studies included in review (qualitative) (n = {c.studies})\nReports included (n = {c.reports})", size=10.5, weight="bold")
-    label(ax, b_meta[0] + wM / 2, b_meta[1] + h / 2, f"Studies included in meta-analysis (quantitative) (n = {c.meta_studies})", size=10.5, weight="bold")
+    label_in_box(
+        ax, b_excl_ft, ft_txt,
+        ha="left", va="top",
+        justify=False, wrap=False,
+        size=BOX_TEXT_SIZE
+    )
 
+    # arrows: left spine
     connect_down(ax, b_ident, b_unique, color=arrowc)
     connect_down(ax, b_unique, b_screen, color=arrowc)
     connect_down(ax, b_screen, b_sought, color=arrowc)
@@ -493,92 +760,52 @@ def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = N
     connect_down(ax, b_assess, b_incl, color=arrowc)
     connect_down(ax, b_incl, b_meta, color=arrowc)
 
+    # elbow arrows to right PRISMA boxes
     elbow = "angle3,angleA=0,angleB=90"
-    arrow(ax, (xM + wM + 0.12, b_ident[1] + b_ident[3] / 2), (xS - 0.10, b_removed[1] + b_removed[3] / 2), color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
-    arrow(ax, (xM + wM + 0.12, b_screen[1] + h / 2), (xS - 0.10, b_excl_ta[1] + h / 2), color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
-    arrow(ax, (xM + wM + 0.12, b_sought[1] + h / 2), (xS - 0.10, b_notret[1] + h / 2), color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
-    arrow(ax, (xM + wM + 0.12, b_assess[1] + h / 2), (xS - 0.10, b_excl_ft[1] + b_excl_ft[3] / 2), color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
+    arrow(ax, (xM + wM + 0.12, b_ident[1] + b_ident[3] / 2), (xS - 0.10, b_removed[1] + b_removed[3] / 2),
+          color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
+    arrow(ax, (xM + wM + 0.12, b_screen[1] + h / 2), (xS - 0.10, b_excl_ta[1] + b_excl_ta[3] / 2),
+          color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
+    arrow(ax, (xM + wM + 0.12, b_sought[1] + h / 2), (xS - 0.10, b_notret[1] + b_notret[3] / 2),
+          color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
+    arrow(ax, (xM + wM + 0.12, b_assess[1] + h / 2), (xS - 0.10, b_excl_ft[1] + b_excl_ft[3] / 2),
+          color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
 
-
-def parse_ratios(s: str) -> Tuple[float, float, float]:
-    parts = [p.strip() for p in (s or "").split(",") if p.strip()]
-    if len(parts) != 3:
-        return (1.10, 1.00, 0.95)
-    try:
-        r = [float(x) for x in parts]
-        if min(r) <= 0:
-            return (1.10, 1.00, 0.95)
-        return (r[0], r[1], r[2])
-    except Exception:
-        return (1.10, 1.00, 0.95)
-
-
-def draw_bottom_panel(ax, c: PrismaCounts, bd_summary: Optional[Dict[str, Any]], layout: Layout,
-                      bottom_gap: float = 0.85, bottom_ratios: Tuple[float, float, float] = (1.10, 1.00, 0.95)):
-    ax.set_axis_off()
-    ax.set_xlim(0, layout.xmax)
-    ax.set_ylim(0, 2.85)
-    border = "#1f1f1f"
-
-    y = 0.42
-    h = 2.05
-    gap = bottom_gap
-    r1, r2, r3 = bottom_ratios
-
-    usable = (layout.xmax - 2 * layout.margin) - 2 * gap
-    total_r = r1 + r2 + r3
-    w1 = usable * (r1 / total_r)
-    w2 = usable * (r2 / total_r)
-    w3 = usable * (r3 / total_r)
-
-    total_w = w1 + w2 + w3 + 2 * gap
-    x0 = (layout.xmax - total_w) / 2.0  # <-- centers the 3 boxes (equal blank space)
-
-    gradient_box(ax, x0, y, w1, h, "#ffffff", "#eef5ff", edge=border, lw=1.0, r=0.16, shadow=True)
-    label(ax, x0 + 0.35, y + h - 0.30, "Search snapshot", ha="left", size=11.0, weight="bold")
-
-    lines = []
-    if c.search_date: lines.append(f"Last search date: {c.search_date}")
-    if c.databases_list: lines.append("Databases: " + ", ".join(c.databases_list))
-    if c.limits: lines.append("Limits: " + c.limits)
-    if c.notes: lines.append("Notes: " + c.notes)
-    if not lines:
-        lines = [
+    # rightmost panels content
+    # Search snapshot
+    search_lines = []
+    if c.search_date:
+        search_lines.append(f"Last search date: {c.search_date}")
+    if c.databases_list:
+        search_lines.append("Database(s): " + ", ".join(c.databases_list))
+    if c.limits:
+        search_lines.append("Limits: " + c.limits)
+    if c.notes:
+        search_lines.append("Notes: " + c.notes)
+    if not search_lines:
+        search_lines = [
             "Last search date: edit metadata.last_search_date in JSON",
-            "Databases: edit metadata.databases in JSON",
+            "Database(s): edit metadata.databases in JSON",
             "Limits: optional",
         ]
-    label(ax, x0 + 0.35, y + h - 0.65, wrap_keep_newlines("\n".join(lines), 70), ha="left", va="top", size=8.8, color="#222222")
+    draw_side_panel(ax, p1, "Search snapshot", "\n".join(search_lines), "#ffffff", "#eef5ff")
 
-    x1 = x0 + w1 + gap
-    gradient_box(ax, x1, y, w2, h, "#ffffff", "#eefcf2", edge=border, lw=1.0, r=0.16, shadow=True)
-    label(ax, x1 + 0.35, y + h - 0.30, "Bangladesh evidence summary", ha="left", size=11.0, weight="bold")
+    # Bangladesh evidence summary (from DOCX if available)
+    # We will write into ax via a placeholder now; updated in main() if bd_summary present.
+    # (Filled after draw_prisma in main, via an overlay label_in_box.)
+    draw_side_panel(ax, p2, "Bangladesh evidence summary",
+                    "BD summary not available.\nRun with --docx and ensure the table contains\ncolumns: Method, Sample size.",
+                    "#ffffff", "#eefcf2")
 
-    if bd_summary:
-        studies = bd_summary.get("studies")
-        total_n = bd_summary.get("total_n")
-        n_counted = bd_summary.get("n_counted")
-        designs = bd_summary.get("designs", {})
-        top = f"Extracted Table 1 studies: {studies}"
-        if total_n is not None and n_counted:
-            top += f"\nSum sample size (extractable): {total_n} (from {n_counted} studies)"
-        design_str = "; ".join([f"{k}: {v}" for k, v in designs.items()]) if designs else "NR"
-        body = top + "\nDesigns: " + design_str
-        label(ax, x1 + 0.35, y + h - 0.65, wrap_keep_newlines(body, 62), ha="left", va="top", size=8.7, color="#222222")
-    else:
-        label(ax, x1 + 0.35, y + h - 0.65,
-              "BD summary not available.\nRun with --docx and ensure the table contains\ncolumns: Method, Sample size.",
-              ha="left", va="top", size=8.7, color="#444444")
-
-    x2 = x1 + w2 + gap
-    gradient_box(ax, x2, y, w3, h, "#ffffff", "#fff0f4", edge=border, lw=1.0, r=0.16, shadow=True)
-    label(ax, x2 + 0.35, y + h - 0.30, "Diagnostics", ha="left", size=11.0, weight="bold")
+    # Diagnostics
     diag = (
         "When JSON is final, enable validation:\n"
         "• arithmetic consistency\n"
         "• auto-highlight inconsistencies (red flags)"
     )
-    label(ax, x2 + 0.35, y + h - 0.65, wrap_keep_newlines(diag, 60), ha="left", va="top", size=8.7, color="#333333")
+    draw_side_panel(ax, p3, "Diagnostics", diag, "#ffffff", "#fff0f4")
+
+    return {"panel_boxes": (p1, p2, p3)}  # for optional overlay edits
 
 
 def write_template(path: Path):
@@ -602,9 +829,9 @@ def write_template(path: Path):
         "studies_included_in_meta_analysis": 0,
         "metadata": {
             "last_search_date": "DD-MMM-YYYY",
-            "databases": ["PubMed", "Scopus", "Web of Science"],
-            "limits": "Language: English; Humans; Bangladesh; up to Nov 2025",
-            "notes": "If citation chasing was used after de-duplication, document it here.",
+            "databases": ["PubMed"],
+            "limits": "No filters/limits applied",
+            "notes": "Insert the exact PubMed query string here.",
         },
     }
     path.write_text(json.dumps(tpl, indent=2), encoding="utf-8")
@@ -616,22 +843,11 @@ def main():
     ap.add_argument("--counts", type=str, default=None)
     ap.add_argument("--write_template", type=str, default=None)
     ap.add_argument("--docx", type=str, default=None)
-    ap.add_argument("--bottom_panel", action="store_true")
     ap.add_argument("--outdir", type=str, default="figures")
-    ap.add_argument("--basename", type=str, default="Figure_1_PRISMA_GOAT_v8")
+    ap.add_argument("--basename", type=str, default="Figure_1_PRISMA_GOAT_v12")
     ap.add_argument("--dpi", type=int, default=600)
     ap.add_argument("--eps", action="store_true")
     ap.add_argument("--subtitle", type=str, default=None)
-
-    ap.add_argument("--xmax", type=float, default=21.8)
-    ap.add_argument("--margin", type=float, default=1.35)
-    ap.add_argument("--main_w", type=float, default=8.15)
-    ap.add_argument("--side_w", type=float, default=8.10)
-    ap.add_argument("--col_gap", type=float, default=1.00)
-
-    ap.add_argument("--bottom_gap", type=float, default=0.85)
-    ap.add_argument("--bottom_ratios", type=str, default="1.10,1.00,0.95")
-
     args = ap.parse_args()
 
     if args.write_template:
@@ -651,37 +867,39 @@ def main():
     d = json.loads(counts_path.read_text(encoding="utf-8"))
     c = PrismaCounts.from_json(d)
 
+    bd_summary = None
+    if args.docx:
+        bd_summary = extract_table1_summary(Path(args.docx))
+
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    bd_summary = None
-    if args.bottom_panel and args.docx:
-        bd_summary = extract_table1_summary(Path(args.docx))
+    layout = Layout()
 
-    layout = Layout(
-        xmax=float(args.xmax),
-        margin=float(args.margin),
-        main_w=float(args.main_w),
-        side_w=float(args.side_w),
-        col_gap=float(args.col_gap),
-    )
-    ratios = parse_ratios(args.bottom_ratios)
+    # Figure size: keep the same visual scale; layout.ymax drives axes limits
+    fig = plt.figure(figsize=(18.6, 8.8))
+    ax = fig.add_subplot(1, 1, 1)
+    info = draw_prisma(ax, c, layout=layout, subtitle=args.subtitle)
 
-    # Auto-expand vertical canvas if you increase box heights/gaps (keeps text from overflowing)
-    layout.y_max = max(layout.y_max, required_prisma_ymax(layout))
-    y_scale = layout.y_max / 10.0
+    # If bd_summary exists, overwrite the placeholder inside panel 2 body area (keeps box sizes consistent).
+    if bd_summary:
+        p1, p2, p3 = info["panel_boxes"]
+        studies = bd_summary.get("studies")
+        total_n = bd_summary.get("total_n")
+        n_counted = bd_summary.get("n_counted")
+        designs = bd_summary.get("designs", {})
+        top = f"Extracted Table 1 studies: {studies}"
+        if total_n is not None and n_counted:
+            top += f"\nSum sample size (extractable): {total_n} (from {n_counted} studies)"
+        design_str = "; ".join([f"{k}: {v}" for k, v in designs.items()]) if designs else "NR"
+        body = top + "\nDesigns: " + design_str
 
-    if args.bottom_panel:
-        fig = plt.figure(figsize=(18.4, 10.1 * y_scale))
-        gs = fig.add_gridspec(2, 1, height_ratios=[3.85, 1.15], hspace=0.02)
-        ax0 = fig.add_subplot(gs[0, 0])
-        ax1 = fig.add_subplot(gs[1, 0])
-        draw_prisma(ax0, c, layout=layout, subtitle=args.subtitle)
-        draw_bottom_panel(ax1, c, bd_summary, layout=layout, bottom_gap=float(args.bottom_gap), bottom_ratios=ratios)
-    else:
-        fig = plt.figure(figsize=(18.4, 8.0 * y_scale))
-        ax0 = fig.add_subplot(1, 1, 1)
-        draw_prisma(ax0, c, layout=layout, subtitle=args.subtitle)
+        # Body area for panel 2 (same as draw_side_panel)
+        x, y, w, h = p2
+        body_box = (x + 0.02, y + 0.02, w - 0.04, h - 0.55)
+        label_in_box(ax, body_box, body, ha="left", va="top",
+                     max_size=PANEL_BODY_MAX, min_size=PANEL_BODY_MIN,
+                     weight="regular", color="#222222", pad=0.32)
 
     base = outdir / args.basename
     save_kws = dict(bbox_inches="tight", facecolor="white", pad_inches=0.20)
