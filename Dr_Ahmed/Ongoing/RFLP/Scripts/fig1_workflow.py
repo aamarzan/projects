@@ -266,20 +266,21 @@ def build(out_dir: Path, stem="Figure_1_Workflow_Premium_v5_1"):
         zorder=15
     )
 
-    # (2) GEL -> Consensus mutation call (routed around boxes; NO overlaps)
+    # (2) GEL -> Consensus mutation call (start from RIGHT side of RFLP box)
     y_corridor_23 = (y3 + h3 + y2) / 2
-    x_s5b = mid_bottom(s5)[0]
     x_v2t = mid_top(v2)[0]
     x_margin = 0.975  # outer safe corridor, inside axes
 
+    p_start = mid_right(s5)  # <-- RIGHT edge start (requested)
+    y_start = p_start[1]
+
     routed_arrow(
         ax,
-        [mid_bottom(s5),
-         (x_s5b, y_corridor_12),
-         (x_margin, y_corridor_12),
-         (x_margin, y_corridor_23),
-         (x_v2t, y_corridor_23),
-         mid_top(v2)],
+        [p_start,
+        (x_margin, y_start),        # move out to right corridor
+        (x_margin, y_corridor_23),  # drop down outside boxes
+        (x_v2t, y_corridor_23),     # move left in corridor
+        mid_top(v2)],               # up into consensus
         color="#7C2D12",
         lw=1.15, ms=12, z=12,
         shrinkA=12, shrinkB=14
