@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-figure_1_prisma_goat_v12.py
+Figure_1_PRISMA.py
 
-v12 (layout upgrade):
+v13 (text clarity fixes):
 - FIX: Newlines are real newlines (no literal '\\n' on the figure).
 - NEW: 3-column layout option:
     Column 1: Main PRISMA spine (left flow boxes)
@@ -15,7 +15,7 @@ v12 (layout upgrade):
     (A) left flow boxes, (B) right PRISMA boxes, (C) supplementary panels.
 
 Run (same as before):
-  python figure_1_prisma_goat_v12.py --counts prisma_counts.json --outdir figures --docx "Multiple Myeloma.docx"
+  python Figure_1_PRISMA.py --counts prisma_counts.json --outdir figures --docx "Multiple Myeloma.docx"
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ SIDE_FT_H = 2.25        # "Reports excluded (with reasons)" box height
 
 # Supplementary panels (rightmost column):
 PANEL_GAP = 0.32
-PANEL_H = 3.38          # each of the 3 panels height (stacked top->bottom)
+PANEL_H = 3.68          # each of the 3 panels height (stacked top->bottom)
 
 # 3) TYPOGRAPHY
 TITLE_SIZE = 16
@@ -553,17 +553,27 @@ def required_ymax(layout: Layout) -> float:
 
 # --------------------------- Drawing ---------------------------
 
-def draw_side_panel(ax, box, title: str, body: str, c0: str, c1: str):
+def draw_side_panel(
+    ax,
+    box,
+    title: str,
+    body: str,
+    c0: str,
+    c1: str,
+    *,
+    body_ha: str = "left",
+    body_va: str = "top",
+):
     border = "#1f1f1f"
     x, y, w, h = box
     patch = gradient_box(ax, x, y, w, h, c0, c1, edge=border, lw=1.0, r=0.16, shadow=True)
 
-    # title (clipped to panel)
+    # title (TOP-CENTER, clipped to panel)
     t_title = ax.text(
-        x + 0.36,
+        x + w / 2,
         y + h - 0.30,
         title,
-        ha="left",
+        ha="center",
         va="top",
         fontsize=11.2,
         fontweight="bold",
@@ -579,8 +589,8 @@ def draw_side_panel(ax, box, title: str, body: str, c0: str, c1: str):
         ax,
         body_box,
         body,
-        ha="left",
-        va="top",
+        ha=body_ha,
+        va=body_va,
         max_size=PANEL_BODY_MAX,
         min_size=PANEL_BODY_MIN,
         weight="regular",
@@ -589,9 +599,7 @@ def draw_side_panel(ax, box, title: str, body: str, c0: str, c1: str):
         clip_patch=patch,
     )
 
-
-
-def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = None):
+def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = None, bd_summary: Optional[Dict[str, Any]] = None):
     ax.set_axis_off()
 
     if AUTO_XMAX:
@@ -723,14 +731,26 @@ def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = N
     label_in_box(ax, b_meta, meta_txt, max_size=10.6, min_size=8.0, weight="bold")
 
     # right PRISMA text
-    removed_txt = (
-        "Records removed before screening. "
-        f"Duplicate records removed (n = {c.dup}). "
-        f"Automation tools {_zero_phrase(c.auto, kind='used')} (n = {c.auto}). "
-        f"Other reasons {_zero_phrase(c.other_rm, kind='performed')} (n = {c.other_rm})."
+    auto_state = "not used" if c.auto == 0 else "used"
+    other_line = (
+        f"Other reasons not performed (n = {c.other_rm})"
+        if c.other_rm == 0
+        else f"Other reasons (n = {c.other_rm})"
     )
-    label_in_box(ax, b_removed, removed_txt, ha="left", va="top", justify=True, wrap=True, size=BOX_TEXT_SIZE)
 
+    removed_txt = "\n".join(
+        [
+            "Records removed before screening",
+            f"Duplicate records removed (n = {c.dup})",
+            f"Automation tools {auto_state} (n = {c.auto})",
+            other_line,
+        ]
+    )
+    label_in_box(
+        ax, b_removed, removed_txt,
+        ha="center", va="center",
+        justify=False, wrap=True, size=BOX_TEXT_SIZE
+    )
 
     label_in_box(ax, b_excl_ta, f"Records excluded\n(n = {c.excluded_ta})",
                  max_size=SIDE_MAX, min_size=SIDE_MIN, weight="bold")
@@ -739,15 +759,21 @@ def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = N
                  max_size=SIDE_MAX, min_size=SIDE_MIN, weight="bold")
 
     if c.fulltext_excl:
-        sentences = [f"{r} (n = {n})." for r, n in c.fulltext_excl]
-        ft_txt = "Reports excluded (with reasons)\n" + "\n".join(sentences)
-    else:
-        ft_txt = "Reports excluded (with reasons)\nNo full-text exclusions recorded."
+        lines = ["Reports excluded (with reasons)"]
+        for r, n in c.fulltext_excl:
+            r = re.sub(r"\s+", " ", str(r)).strip()
+
+            # Shorten the long reason to keep the line compact in the box
+            if re.search(r"wrong outcome", r, flags=re.IGNORECASE) and re.search(r"non[- ]?MM", r, flags=re.IGNORECASE):
+                r = "Non-MM plasma cell disorder"
+
+            lines.append(f"{r} (n = {n})")
+        ft_txt = "\n".join(lines)
 
     label_in_box(
         ax, b_excl_ft, ft_txt,
-        ha="left", va="top",
-        justify=False, wrap=False,
+        ha="center", va="center",
+        justify=False, wrap=True,
         size=BOX_TEXT_SIZE
     )
 
@@ -771,41 +797,59 @@ def draw_prisma(ax, c: PrismaCounts, layout: Layout, subtitle: Optional[str] = N
     arrow(ax, (xM + wM + 0.12, b_assess[1] + h / 2), (xS - 0.10, b_excl_ft[1] + b_excl_ft[3] / 2),
           color=arrowc, lw=1.25, ms=12.0, connectionstyle=elbow)
 
-    # rightmost panels content
-    # Search snapshot
-    search_lines = []
+        # rightmost panels content
+    # Search snapshot (keep it readable — no raw PubMed syntax dump)
+    search_lines: List[str] = []
     if c.search_date:
         search_lines.append(f"Last search date: {c.search_date}")
     if c.databases_list:
         search_lines.append("Database(s): " + ", ".join(c.databases_list))
     if c.limits:
         search_lines.append("Limits: " + c.limits)
-    if c.notes:
-        search_lines.append("Notes: " + c.notes)
-    if not search_lines:
-        search_lines = [
-            "Last search date: edit metadata.last_search_date in JSON",
-            "Database(s): edit metadata.databases in JSON",
-            "Limits: optional",
-        ]
-    draw_side_panel(ax, p1, "Search snapshot", "\n".join(search_lines), "#ffffff", "#eef5ff")
+
+    strategy = (
+        "Search strategy:\n"
+        "Condition: multiple myeloma / plasma cell myeloma / plasma cell neoplasm*\n"
+        "Location: Bangladesh / Bangladeshi\n"
+        "Fields: MeSH terms; title/abstract"
+    )
+    search_body = "\n".join(search_lines + [strategy]) if search_lines else strategy
+    draw_side_panel(ax, p1, "Search snapshot", search_body, "#ffffff", "#eef5ff", body_ha="center", body_va="center")
 
     # Bangladesh evidence summary (from DOCX if available)
-    # We will write into ax via a placeholder now; updated in main() if bd_summary present.
-    # (Filled after draw_prisma in main, via an overlay label_in_box.)
-    draw_side_panel(ax, p2, "Bangladesh evidence summary",
-                    "BD summary not available.\nRun with --docx and ensure the table contains\ncolumns: Method, Sample size.",
-                    "#ffffff", "#eefcf2")
+    if bd_summary:
+        studies = bd_summary.get("studies")
+        total_n = bd_summary.get("total_n")
+        n_counted = bd_summary.get("n_counted")
+        designs = bd_summary.get("designs", {}) or {}
+
+        lines: List[str] = []
+        if studies is not None:
+            lines.append(f"Extracted Table 1 studies: {studies}")
+        if total_n is not None and n_counted:
+            lines.append(f"Sum sample size (extractable): {total_n} (from {n_counted} studies)")
+        if designs:
+            lines.append("Study designs:")
+            for k, v in designs.items():
+                k = re.sub(r"\s+", " ", str(k)).strip()
+                lines.append(f"{k}: {v}")
+
+        bd_body = "\n".join(lines) if lines else "Evidence summary available, but no extractable fields found"
+    else:
+        bd_body = "Evidence summary not available\n(Table 1 not found in DOCX)"
+
+    draw_side_panel(ax, p2, "Bangladesh evidence summary", bd_body, "#ffffff", "#eefcf2", body_ha="center", body_va="center")
 
     # Diagnostics
     diag = (
-        "When JSON is final, enable validation:\n"
-        "• arithmetic consistency\n"
-        "• auto-highlight inconsistencies (red flags)"
+        "Consistency checks (recommended):\n"
+        "• verify arithmetic totals\n"
+        "• confirm exclusions match reasons\n"
+        "• confirm retrieval counts"
     )
-    draw_side_panel(ax, p3, "Diagnostics", diag, "#ffffff", "#fff0f4")
+    draw_side_panel(ax, p3, "Diagnostics", diag, "#ffffff", "#fff0f4", body_ha="center", body_va="center")
 
-    return {"panel_boxes": (p1, p2, p3)}  # for optional overlay edits
+    return {"panel_boxes": (p1, p2, p3)}
 
 
 def write_template(path: Path):
@@ -820,7 +864,7 @@ def write_template(path: Path):
         "reports_assessed_for_eligibility": 0,
         "reports_excluded": [
             {"reason": "Not Bangladesh population", "n": 0},
-            {"reason": "Wrong outcome or non-MM plasma cell disorder", "n": 0},
+            {"reason": "Non-MM plasma cell disorder", "n": 0},
             {"reason": "Case report or non-eligible design", "n": 0},
             {"reason": "Insufficient extractable data", "n": 0},
         ],
@@ -844,7 +888,7 @@ def main():
     ap.add_argument("--write_template", type=str, default=None)
     ap.add_argument("--docx", type=str, default=None)
     ap.add_argument("--outdir", type=str, default="figures")
-    ap.add_argument("--basename", type=str, default="Figure_1_PRISMA_GOAT_v12")
+    ap.add_argument("--basename", type=str, default="Figure_1_PRISMA")
     ap.add_argument("--dpi", type=int, default=600)
     ap.add_argument("--eps", action="store_true")
     ap.add_argument("--subtitle", type=str, default=None)
@@ -879,27 +923,8 @@ def main():
     # Figure size: keep the same visual scale; layout.ymax drives axes limits
     fig = plt.figure(figsize=(18.6, 8.8))
     ax = fig.add_subplot(1, 1, 1)
-    info = draw_prisma(ax, c, layout=layout, subtitle=args.subtitle)
+    info = draw_prisma(ax, c, layout=layout, subtitle=args.subtitle, bd_summary=bd_summary)
 
-    # If bd_summary exists, overwrite the placeholder inside panel 2 body area (keeps box sizes consistent).
-    if bd_summary:
-        p1, p2, p3 = info["panel_boxes"]
-        studies = bd_summary.get("studies")
-        total_n = bd_summary.get("total_n")
-        n_counted = bd_summary.get("n_counted")
-        designs = bd_summary.get("designs", {})
-        top = f"Extracted Table 1 studies: {studies}"
-        if total_n is not None and n_counted:
-            top += f"\nSum sample size (extractable): {total_n} (from {n_counted} studies)"
-        design_str = "; ".join([f"{k}: {v}" for k, v in designs.items()]) if designs else "NR"
-        body = top + "\nDesigns: " + design_str
-
-        # Body area for panel 2 (same as draw_side_panel)
-        x, y, w, h = p2
-        body_box = (x + 0.02, y + 0.02, w - 0.04, h - 0.55)
-        label_in_box(ax, body_box, body, ha="left", va="top",
-                     max_size=PANEL_BODY_MAX, min_size=PANEL_BODY_MIN,
-                     weight="regular", color="#222222", pad=0.32)
 
     base = outdir / args.basename
     save_kws = dict(bbox_inches="tight", facecolor="white", pad_inches=0.20)
