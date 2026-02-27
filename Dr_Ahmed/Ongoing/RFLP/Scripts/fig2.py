@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Figure 2 (Premium v2.3): Targeted mutation panel across Spike domains and non-spike regions.
 
@@ -60,7 +60,7 @@ DEFAULT_ROWS = [
     ("K1191N", "S", 1191, "S2"),
     ("SGF3675-3677del", "ORF1ab", 3675, "ORF1ab"),
     ("R5716C", "ORF1ab", 5716, "ORF1ab"),
-    ("ERS31_33del", "N", 31, "N"),
+    ("ERS31-33del", "N", 31, "N"),
     ("S413R", "N", 413, "N"),
 ]
 
@@ -150,7 +150,7 @@ def main(panel_csv: Path, out_dir: Path):
     def bar(y, face, label):
         ax.add_patch(Rectangle((0, y - BAR_YOFF), XMAX, BAR_H,
                                facecolor=face, edgecolor="#111827", lw=1.0, zorder=1))
-        # Label INSIDE the bar; white tag prevents marker “collision”
+        # Label INSIDE the bar; white tag prevents marker â€œcollisionâ€
         ax.text(
             18, y, label,
             ha="left", va="center",
@@ -280,3 +280,4 @@ if __name__ == "__main__":
     p.add_argument("--out", default="out_figures")
     args = p.parse_args()
     main(Path(args.panel_csv), Path(args.out))
+
