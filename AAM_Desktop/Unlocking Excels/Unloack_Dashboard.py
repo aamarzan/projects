@@ -23,10 +23,10 @@ def close_excel_processes():
 
 file_path = r"C:\Users\User\OneDrive\2. Personal\AAM\Desktop\Unlocking Excels\NIHR RIGHT4 Methanol Dashboard.xlsm"
 sheet_passwords = {
-    "Dashboard": "dashboard2025!", "Master Data": "masterdata2025!", "CMCH": "cmch2020",
+    "Dashboard": "dashboard!", "Master Data": "masterdata!", "CMCH": "cmch2020",
     "SOMCH": "somch2020", "SZMCH": "szmch2021", "RMCH": "rmch2021", "DMCH": "dmch2022",
-    "PGIMER": "pgimer!", "SGRDUHS": "sgrduhs!", "GGSMC": "ggsmc!", "Daily": "daily2025!",
-    "Monthly": "monthly2025!", "All Site": "allsite2025!", "Target": "target2025!", "True (+)": "true2025!"
+    "PGIMER": "pgimer!", "SGRDUHS": "sgrduhs!", "GGSMC": "ggsmc!", "Daily": "daily!",
+    "Monthly": "monthly!", "All Site": "allsite!", "Target": "target!", "True (+)": "true!"
 }
 
 def unprotect_excel_sheets(file_path, passwords):
