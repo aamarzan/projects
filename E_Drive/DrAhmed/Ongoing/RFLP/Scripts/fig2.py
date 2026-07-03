@@ -40,6 +40,7 @@ def apply_style():
         "savefig.facecolor": "white",
         "pdf.fonttype": 42,
         "ps.fonttype": 42,
+        "svg.fonttype": "none",
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.06,
     })
@@ -279,7 +280,9 @@ def main(panel_csv: Path, out_dir: Path):
     stem = out_dir / "Figure_2_Panel_Map"
     fig.savefig(stem.with_suffix(".png"), dpi=600)
     save_figure_pdf_a4(fig, stem.with_suffix(".pdf"), facecolor="white", landscape=True, margin_mm=12.0)
+    fig.savefig(stem.with_suffix(".svg"))
     fig.savefig(stem.with_suffix(".eps"))
+
     plt.close(fig)
 
 
