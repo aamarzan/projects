@@ -27,6 +27,7 @@ from matplotlib.gridspec import GridSpec
 
 plt.rcParams["pdf.fonttype"] = 42
 plt.rcParams["ps.fonttype"] = 42
+plt.rcParams["svg.fonttype"] = "none"
 
 PAL = {
     "paper": (1.00, 1.00, 1.00),
@@ -391,6 +392,7 @@ def main():
     fig.subplots_adjust(left=0.070, right=0.975, top=0.965, bottom=0.070)
 
     save_figure_pdf_a4(fig, str(base) + ".pdf", facecolor=PAL["paper"], landscape=True, margin_mm=12.0)
+    fig.savefig(str(base) + ".svg", facecolor=PAL["paper"])
     fig.savefig(str(base) + ".png", dpi=int(args.dpi), facecolor=PAL["paper"])
     fig.savefig(str(base) + ".jpg", dpi=int(args.dpi), facecolor=PAL["paper"],
                 pil_kwargs={"quality": int(args.jpg_quality), "subsampling": 2})
