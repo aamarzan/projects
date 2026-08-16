@@ -13,6 +13,8 @@ Also restores the missing axis placements (axA/axB/axC/axD/axE/axF) so the scrip
 
 import argparse
 from pathlib import Path
+
+from pdf_a4_helper import save_figure_pdf_a4
 import numpy as np
 import pandas as pd
 
@@ -432,7 +434,7 @@ def main():
     base = outdir / "Figure_5_Enzyme_Strategy"
 
     fig.subplots_adjust(left=0.04, right=0.975, top=0.965, bottom=0.065)
-    fig.savefig(str(base) + ".pdf", facecolor=PAL["paper"])
+    save_figure_pdf_a4(fig, str(base) + ".pdf", facecolor=PAL["paper"], landscape=True, margin_mm=12.0)
     fig.savefig(str(base) + ".png", dpi=int(args.dpi), facecolor=PAL["paper"])
     fig.savefig(str(base) + ".jpg", dpi=int(args.dpi), facecolor=PAL["paper"],
                 pil_kwargs={"quality": int(args.jpg_quality), "subsampling": 2})
